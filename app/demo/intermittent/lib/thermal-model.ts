@@ -1,12 +1,17 @@
-import type { BuildingModel, Scenario, SimulationResult } from "../types";
 import {
-	CO2_FACTORS,
-	COP_NOMINAL,
-	COP_REFERENCE_TEMP,
-	ENERGY_PRICES,
-	INERTIA_BY_PERIOD,
-	UBAT_BY_DPE,
-} from "./constants";
+	type BuildingModel,
+	HeatingMode,
+	type PIDState,
+	type Scenario,
+	type SimulationResult,
+} from "../types";
+import { CO2_FACTORS, ENERGY_PRICES, INERTIA_BY_PERIOD, UBAT_BY_DPE } from "./constants";
+import {
+	calculateAvailableHeatingPower,
+	calculateElectricalPower,
+	calculateNominalPower,
+} from "./heating-system";
+import { calculatePIDGains, createInitialPIDState, pidController } from "./pid-controller";
 
 /**
  * Calculate thermal capacity (Wh/K) based on building characteristics
@@ -29,56 +34,62 @@ function calculateThermalCapacity(model: BuildingModel): number {
 	return baseThermalMass * model.surface * (inertiaFactor / referenceInertia);
 }
 
-/**
- * Calculate COP for heat pump based on outdoor temperature
- */
-function calculateCOP(outdoorTemp: number, isConstantPower: boolean): number {
-	if (isConstantPower) {
-		// Constant power mode: COP varies less
-		return COP_NOMINAL * (1 - 0.01 * (COP_REFERENCE_TEMP - outdoorTemp));
-	}
-	// Standard mode: COP varies with outdoor temp
-	return Math.max(1.5, COP_NOMINAL * (1 - 0.02 * (COP_REFERENCE_TEMP - outdoorTemp)));
+interface HeatingSchedule {
+	mode: HeatingMode;
+	setpoint: number | null;
 }
 
 /**
- * Get setpoint temperature for a given hour based on scenario
+ * Get heating mode and setpoint for a given hour based on scenario
  */
-function getSetpoint(scenario: Scenario, hour: number): number | null {
+function getHeatingSchedule(scenario: Scenario, hour: number): HeatingSchedule {
 	const hourOfDay = hour % 24;
 
 	switch (scenario.id) {
 		case "constant":
-			return scenario.baseTemp;
+			return { mode: HeatingMode.Comfort, setpoint: scenario.baseTemp };
 
 		case "day_reduction": {
 			const isDaytime = hourOfDay >= scenario.dayStart && hourOfDay < scenario.dayEnd;
-			return isDaytime ? (scenario.reducedTemp ?? scenario.baseTemp - 3) : scenario.baseTemp;
+			return {
+				mode: HeatingMode.Comfort,
+				setpoint: isDaytime ? (scenario.reducedTemp ?? scenario.baseTemp - 3) : scenario.baseTemp,
+			};
 		}
 
 		case "day_off": {
 			const isDaytime = hourOfDay >= scenario.dayStart && hourOfDay < scenario.dayEnd;
-			return isDaytime ? null : scenario.baseTemp; // null = heating off
+			return {
+				mode: isDaytime ? HeatingMode.Off : HeatingMode.Comfort,
+				setpoint: isDaytime ? null : scenario.baseTemp,
+			};
+		}
+
+		case "thermostat": {
+			const preheatDuration = scenario.preheatDuration ?? 1; // Default 1 hour before return
+			const preheatStart = scenario.dayEnd - preheatDuration;
+
+			// Daytime: heating off
+			if (hourOfDay >= scenario.dayStart && hourOfDay < preheatStart) {
+				return { mode: HeatingMode.Off, setpoint: null };
+			}
+			// Preheat period: PID controller to reach comfort temp
+			if (hourOfDay >= preheatStart && hourOfDay < scenario.dayEnd) {
+				return { mode: HeatingMode.PreheatPID, setpoint: scenario.baseTemp };
+			}
+			// Night/evening: comfort mode
+			return { mode: HeatingMode.Comfort, setpoint: scenario.baseTemp };
 		}
 
 		default:
-			return scenario.baseTemp;
+			return { mode: HeatingMode.Comfort, setpoint: scenario.baseTemp };
 	}
 }
 
 /**
- * Calculate maximum heating power needed (kW)
- */
-function calculateMaxHeatingPower(model: BuildingModel, designOutdoorTemp: number): number {
-	const ubat = UBAT_BY_DPE[model.dpeClass];
-	const designIndoorTemp = 20;
-	// P = UA * ΔT
-	const power = (ubat * model.surface * (designIndoorTemp - designOutdoorTemp)) / 1000;
-	return Math.max(1, power * 1.2); // 20% safety margin, minimum 1kW
-}
-
-/**
  * Run thermal simulation for a scenario
+ *
+ * Outputs data at 15-minute resolution (35,040 data points per year)
  */
 export function runSimulation(
 	model: BuildingModel,
@@ -90,88 +101,142 @@ export function runSimulation(
 	const ua = ubat * model.surface; // W/K
 	const capacity = calculateThermalCapacity(model); // Wh/K
 
-	// Find design outdoor temperature (e.g., 5th percentile)
-	const sortedTemps = [...outdoorTemps].sort((a, b) => a - b);
-	const designTemp = sortedTemps[Math.floor(sortedTemps.length * 0.05)];
-	const maxPower = calculateMaxHeatingPower(model, designTemp);
+	// Calculate nominal heating power based on design conditions
+	const nominalPowerW = calculateNominalPower(ua, model.heatingSystem, model.climateZone);
 
-	// Initialize arrays
+	// Initialize arrays for 15-minute resolution
+	const timestamps: number[] = [];
 	const setpointTemps: number[] = [];
 	const ambientTemps: number[] = [];
-	const heatingPower: number[] = [];
+	const heatingPower: number[] = []; // kW at each timestep
 
 	// Initial indoor temperature
 	let indoorTemp = scenario.baseTemp;
 
-	// Time step (1 hour)
-	const dt = 1;
+	// Time step: 15 minutes (0.25 hours) for numerical stability
+	const dt = 0.25;
+	const stepsPerHour = Math.round(1 / dt);
+
+	// PID controller state and gains
+	let pidState: PIDState = createInitialPIDState();
+	const pidGains = calculatePIDGains(capacity, ua);
+
+	// Track previous mode to reset PID state on mode change
+	let previousMode: HeatingMode = HeatingMode.Comfort;
+
+	// Track capacity-limited steps
+	let capacityLimitedSteps = 0;
 
 	// Simulation loop
 	for (let hour = 0; hour < hoursPerYear; hour++) {
 		const outdoorTemp = outdoorTemps[hour] ?? 10;
-		const setpoint = getSetpoint(scenario, hour);
+		const schedule = getHeatingSchedule(scenario, hour);
 
-		setpointTemps.push(setpoint ?? 0);
+		// Calculate available heating power at current outdoor temp
+		const powerResult = calculateAvailableHeatingPower(
+			model.heatingSystem,
+			nominalPowerW,
+			outdoorTemp,
+		);
+		const maxPowerW = powerResult.availablePowerW;
 
-		// Calculate heat loss (W)
-		const heatLoss = ua * (indoorTemp - outdoorTemp);
-
-		let thermalPower = 0; // Thermal power delivered to building (W)
-		let electricalPower = 0; // Electrical power consumed (W)
-
-		if (setpoint !== null) {
-			// Proportional control: calculate power needed to reach/maintain setpoint
-			const tempError = setpoint - indoorTemp;
-
-			// PID-like control: compensate heat loss + correct temperature error
-			const controlGain = 2.0;
-			const requiredPower = heatLoss + (tempError * capacity * controlGain) / dt;
-
-			// Only heat, don't cool (positive power only), and limit to max
-			thermalPower = Math.max(0, Math.min(requiredPower, maxPower * 1000));
-
-			// Calculate electrical power for heat pumps
-			if (model.heatingType === "heat_pump" || model.heatingType === "heat_pump_constant") {
-				const cop = calculateCOP(outdoorTemp, model.heatingType === "heat_pump_constant");
-				electricalPower = thermalPower / cop;
-			} else {
-				electricalPower = thermalPower; // Direct heating (electric, gas, oil)
-			}
+		// Reset PID state when transitioning into PID mode
+		if (schedule.mode === HeatingMode.PreheatPID && previousMode !== HeatingMode.PreheatPID) {
+			pidState = createInitialPIDState();
 		}
+		previousMode = schedule.mode;
 
-		// Update indoor temperature using RC model
-		// dT/dt = (1/C) * [P_heating - UA * (T_indoor - T_outdoor)]
-		const netHeat = thermalPower - heatLoss;
-		const dT = (netHeat * dt) / capacity;
-		indoorTemp = indoorTemp + dT;
+		// Run sub-steps within each hour
+		for (let step = 0; step < stepsPerHour; step++) {
+			const timeInHours = hour + step * dt;
 
-		// Clamp temperature to reasonable bounds
-		indoorTemp = Math.max(outdoorTemp, Math.min(35, indoorTemp));
+			// Calculate heat loss (W)
+			const heatLoss = ua * (indoorTemp - outdoorTemp);
 
-		ambientTemps.push(indoorTemp);
-		heatingPower.push(electricalPower / 1000); // Convert to kW
+			let thermalPower = 0; // Thermal power delivered to building (W)
+
+			switch (schedule.mode) {
+				case HeatingMode.Off:
+					// No heating
+					thermalPower = 0;
+					break;
+
+				case HeatingMode.PreheatPID: {
+					// PID controller for aggressive preheat
+					const setpoint = schedule.setpoint ?? scenario.baseTemp;
+					const pidResult = pidController(setpoint, indoorTemp, pidState, pidGains, dt, maxPowerW);
+					thermalPower = pidResult.power;
+					pidState = pidResult.state;
+					break;
+				}
+
+				default: {
+					// Proportional control for steady-state comfort
+					// Heat loss compensation + gentle proportional correction
+					const setpoint = schedule.setpoint ?? scenario.baseTemp;
+					const tempError = setpoint - indoorTemp;
+					// Use UA-based gain: ~5× steady-state response per °C error
+					// This avoids oscillations while still being responsive
+					const proportionalGain = ua * 5;
+					const requiredPower = heatLoss + tempError * proportionalGain;
+					thermalPower = Math.max(0, Math.min(requiredPower, maxPowerW));
+					break;
+				}
+			}
+
+			// Calculate electrical power consumption
+			const electricalPower = calculateElectricalPower(
+				thermalPower,
+				powerResult,
+				model.heatingSystem.type,
+			);
+
+			// Track capacity-limited steps
+			if (powerResult.isCapacityLimited) {
+				capacityLimitedSteps++;
+			}
+
+			// Store values at 15-minute resolution
+			timestamps.push(timeInHours);
+			setpointTemps.push(schedule.setpoint ?? 0);
+			ambientTemps.push(indoorTemp);
+			heatingPower.push(electricalPower / 1000); // Convert W to kW
+
+			// Update indoor temperature using RC model
+			// dT/dt = (1/C) * [P_heating - UA * (T_indoor - T_outdoor)]
+			const netHeat = thermalPower - heatLoss;
+			const dT = (netHeat * dt) / capacity;
+			indoorTemp = indoorTemp + dT;
+
+			// Clamp temperature to reasonable bounds
+			indoorTemp = Math.max(outdoorTemp, Math.min(35, indoorTemp));
+		}
 	}
 
-	// Calculate total energy consumption
-	const totalEnergy = heatingPower.reduce((sum, p) => sum + p, 0); // kWh (1h steps)
+	// Calculate total energy consumption (power in kW × time step in hours)
+	const totalEnergy = heatingPower.reduce((sum, p) => sum + p * dt, 0); // kWh
 
 	// Calculate CO2 emissions
-	const co2Factor = CO2_FACTORS[model.heatingType];
+	const co2Factor = CO2_FACTORS[model.heatingSystem.type];
 	const co2Emissions = totalEnergy * co2Factor;
 
 	// Calculate annual cost
-	const energyPrice = ENERGY_PRICES[model.heatingType];
+	const energyPrice = ENERGY_PRICES[model.heatingSystem.type];
 	const annualCost = totalEnergy * energyPrice;
+
+	// Convert capacity-limited steps to hours
+	const capacityLimitedHours = capacityLimitedSteps * dt;
 
 	return {
 		scenarioId: scenario.id,
-		timestamps: Array.from({ length: hoursPerYear }, (_, i) => i),
+		timestamps,
 		setpointTemps,
 		ambientTemps,
 		heatingPower,
 		totalEnergy,
 		co2Emissions,
 		annualCost,
+		capacityLimitedHours,
 	};
 }
 

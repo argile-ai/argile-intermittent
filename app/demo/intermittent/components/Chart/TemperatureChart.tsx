@@ -32,12 +32,15 @@ const MONTH_NAMES = [
 // Days per month (non-leap year as PVGIS uses typical meteorological year)
 const DAYS_PER_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
-// Calculate hour offset for start of each month
-const MONTH_START_HOURS: number[] = [];
-let cumulativeHours = 0;
+// Time step constants
+const STEPS_PER_HOUR = 4; // 15-minute resolution
+
+// Calculate step offset for start of each month
+const MONTH_START_STEPS: number[] = [];
+let cumulativeSteps = 0;
 for (const days of DAYS_PER_MONTH) {
-	MONTH_START_HOURS.push(cumulativeHours);
-	cumulativeHours += days * 24;
+	MONTH_START_STEPS.push(cumulativeSteps);
+	cumulativeSteps += days * 24 * STEPS_PER_HOUR;
 }
 
 function TemperatureChartInner({ results, outdoorTemps, isLoading, error }: TemperatureChartProps) {
@@ -52,24 +55,25 @@ function TemperatureChartInner({ results, outdoorTemps, isLoading, error }: Temp
 	// Reset day when month changes if day exceeds month length
 	const effectiveDay = selectedDay >= daysInMonth ? 0 : selectedDay;
 
-	// Calculate data range based on view mode
+	// Calculate data range based on view mode (in 15-minute steps)
 	const dataRange = useMemo(() => {
-		const monthStartHour = MONTH_START_HOURS[selectedMonth] ?? 0;
-		const monthEndHour = monthStartHour + daysInMonth * 24;
+		const stepsPerDay = 24 * STEPS_PER_HOUR;
+		const monthStartStep = MONTH_START_STEPS[selectedMonth] ?? 0;
+		const monthEndStep = monthStartStep + daysInMonth * stepsPerDay;
 
 		switch (viewMode) {
 			case "day": {
-				const dayStartHour = monthStartHour + effectiveDay * 24;
-				return { start: dayStartHour, end: dayStartHour + 24 };
+				const dayStartStep = monthStartStep + effectiveDay * stepsPerDay;
+				return { start: dayStartStep, end: dayStartStep + stepsPerDay };
 			}
 			case "week": {
 				// Show a week starting from selected day (or remaining days if near end)
-				const dayStartHour = monthStartHour + effectiveDay * 24;
-				const weekEndHour = Math.min(dayStartHour + 168, monthEndHour);
-				return { start: dayStartHour, end: weekEndHour };
+				const dayStartStep = monthStartStep + effectiveDay * stepsPerDay;
+				const weekEndStep = Math.min(dayStartStep + 7 * stepsPerDay, monthEndStep);
+				return { start: dayStartStep, end: weekEndStep };
 			}
 			default:
-				return { start: 0, end: 168 };
+				return { start: 0, end: 7 * stepsPerDay };
 		}
 	}, [viewMode, selectedMonth, effectiveDay, daysInMonth]);
 
@@ -79,23 +83,38 @@ function TemperatureChartInner({ results, outdoorTemps, isLoading, error }: Temp
 		}
 
 		const { start, end } = dataRange;
-		const slicedOutdoor = outdoorTemps.slice(start, end);
 
-		// Create x-axis labels
+		// Interpolate outdoor temps from hourly to 15-minute resolution
+		const slicedOutdoor: number[] = [];
+		for (let step = start; step < end; step++) {
+			const hourIndex = Math.floor(step / STEPS_PER_HOUR);
+			const nextHourIndex = Math.min(hourIndex + 1, outdoorTemps.length - 1);
+			const fraction = (step % STEPS_PER_HOUR) / STEPS_PER_HOUR;
+
+			const currentTemp = outdoorTemps[hourIndex] ?? 10;
+			const nextTemp = outdoorTemps[nextHourIndex] ?? currentTemp;
+			slicedOutdoor.push(currentTemp + fraction * (nextTemp - currentTemp));
+		}
+
+		// Create x-axis labels for 15-minute resolution
 		const xAxisData = Array.from({ length: end - start }, (_, i) => {
-			const absoluteHour = start + i;
-			const hour = absoluteHour % 24;
+			const absoluteStep = start + i;
+			const absoluteHour = absoluteStep / STEPS_PER_HOUR;
+			const hourOfDay = Math.floor(absoluteHour) % 24;
+			const minuteOfHour = (absoluteStep % STEPS_PER_HOUR) * 15;
 			const absoluteDay = Math.floor(absoluteHour / 24);
 
 			if (viewMode === "week") {
-				// Show day number within the month
-				const dayInMonth = absoluteDay - Math.floor((MONTH_START_HOURS[selectedMonth] ?? 0) / 24);
-				return hour === 0 ? `${dayInMonth + 1}` : "";
+				// Show day number at midnight only
+				const dayInMonth =
+					absoluteDay - Math.floor((MONTH_START_STEPS[selectedMonth] ?? 0) / (24 * STEPS_PER_HOUR));
+				return hourOfDay === 0 && minuteOfHour === 0 ? `${dayInMonth + 1}` : "";
 			}
-			return `${hour}h`;
+			// Show hour labels on the hour
+			return minuteOfHour === 0 ? `${hourOfDay}h` : "";
 		});
 
-		const series: Array<{
+		type SeriesItem = {
 			name: string;
 			type: "line";
 			data: number[];
@@ -103,7 +122,11 @@ function TemperatureChartInner({ results, outdoorTemps, isLoading, error }: Temp
 			itemStyle: { color: string };
 			showSymbol: boolean;
 			smooth: boolean;
-		}> = [];
+			yAxisIndex: number;
+			areaStyle?: { opacity: number };
+		};
+
+		const series: SeriesItem[] = [];
 
 		// Add outdoor temperature
 		series.push({
@@ -114,6 +137,7 @@ function TemperatureChartInner({ results, outdoorTemps, isLoading, error }: Temp
 			itemStyle: { color: SCENARIO_COLORS.outdoor },
 			showSymbol: false,
 			smooth: true,
+			yAxisIndex: 0,
 		});
 
 		// Add scenario results
@@ -129,6 +153,7 @@ function TemperatureChartInner({ results, outdoorTemps, isLoading, error }: Temp
 				itemStyle: { color },
 				showSymbol: false,
 				smooth: true,
+				yAxisIndex: 0,
 			});
 
 			// Setpoint temperature (dashed line)
@@ -140,6 +165,20 @@ function TemperatureChartInner({ results, outdoorTemps, isLoading, error }: Temp
 				itemStyle: { color },
 				showSymbol: false,
 				smooth: false,
+				yAxisIndex: 0,
+			});
+
+			// Heating power (area chart on secondary axis)
+			series.push({
+				name: `${SCENARIO_LABELS[result.scenarioId]} - Puissance`,
+				type: "line",
+				data: result.heatingPower.slice(start, end),
+				lineStyle: { type: "solid", width: 1 },
+				itemStyle: { color },
+				showSymbol: false,
+				smooth: true,
+				yAxisIndex: 1,
+				areaStyle: { opacity: 0.15 },
 			});
 		}
 
@@ -152,18 +191,29 @@ function TemperatureChartInner({ results, outdoorTemps, isLoading, error }: Temp
 						value: number;
 						color: string;
 						seriesIndex: number;
+						dataIndex: number;
 					}>,
 				) => {
+					// Calculate time from data index
+					const dataIndex = params[0]?.dataIndex ?? 0;
+					const absoluteStep = start + dataIndex;
+					const absoluteHour = absoluteStep / STEPS_PER_HOUR;
+					const hourOfDay = Math.floor(absoluteHour) % 24;
+					const minuteOfHour = (absoluteStep % STEPS_PER_HOUR) * 15;
+					const timeStr = `${hourOfDay.toString().padStart(2, "0")}:${minuteOfHour.toString().padStart(2, "0")}`;
+
 					const lines = params.map((p) => {
-						// Determine if this is a dashed line (Consigne) or solid line
+						const isPower = p.seriesName.includes("Puissance");
 						const isDashed = p.seriesName.includes("Consigne");
 						const lineStyle = isDashed ? "stroke-dasharray: 4 2;" : "";
 						const lineMarker = `<svg width="20" height="10" style="vertical-align: middle; margin-right: 4px;">
 							<line x1="0" y1="5" x2="20" y2="5" stroke="${p.color}" stroke-width="2" style="${lineStyle}" />
 						</svg>`;
-						return `${lineMarker}<span style="color:${p.color}">${p.seriesName}</span>: ${p.value?.toFixed(1) ?? "-"}°C`;
+						const unit = isPower ? "kW" : "°C";
+						const value = isPower ? p.value?.toFixed(2) : p.value?.toFixed(1);
+						return `${lineMarker}<span style="color:${p.color}">${p.seriesName}</span>: ${value ?? "-"} ${unit}`;
 					});
-					return lines.join("<br/>");
+					return `<strong>${timeStr}</strong><br/>${lines.join("<br/>")}`;
 				},
 			},
 			legend: {
@@ -171,10 +221,12 @@ function TemperatureChartInner({ results, outdoorTemps, isLoading, error }: Temp
 				type: "scroll",
 				bottom: 0,
 				textStyle: { fontSize: 11 },
+				// Hide power curves by default
+				selected: Object.fromEntries(series.map((s) => [s.name, !s.name.includes("Puissance")])),
 			},
 			grid: {
 				left: "3%",
-				right: "4%",
+				right: "5%",
 				bottom: "15%",
 				top: "10%",
 				containLabel: true,
@@ -183,16 +235,28 @@ function TemperatureChartInner({ results, outdoorTemps, isLoading, error }: Temp
 				type: "category",
 				data: xAxisData,
 				axisLabel: {
-					interval: viewMode === "day" ? 2 : 23, // Show every 3rd hour on day view
+					// Show every hour on day view (4 steps), every 6 hours on week view
+					interval: viewMode === "day" ? STEPS_PER_HOUR - 1 : STEPS_PER_HOUR * 6 - 1,
 					rotate: 0,
 				},
 			},
-			yAxis: {
-				type: "value",
-				name: "°C",
-				min: (value: { min: number }) => Math.floor(value.min - 2),
-				max: (value: { max: number }) => Math.ceil(value.max + 2),
-			},
+			yAxis: [
+				{
+					type: "value",
+					name: "°C",
+					position: "left",
+					min: (value: { min: number }) => Math.floor(value.min - 2),
+					max: (value: { max: number }) => Math.ceil(value.max + 2),
+				},
+				{
+					type: "value",
+					name: "kW",
+					position: "right",
+					min: 0,
+					axisLine: { show: true },
+					splitLine: { show: false },
+				},
+			],
 			dataZoom: [
 				{
 					type: "inside",

@@ -18,10 +18,10 @@ import {
 import type { ConstructionPeriod, HeatingType } from "../../types";
 import { AddressAutocomplete } from "./AddressAutocomplete";
 
-interface ModelSectionProps {
+type ModelSectionProps = Readonly<{
 	onAddressSelect: (address: string, lat: number, lon: number) => void;
 	onClose?: () => void;
-}
+}>;
 
 export function ModelSection({ onAddressSelect, onClose }: ModelSectionProps) {
 	// Get state from store
@@ -85,7 +85,7 @@ export function ModelSection({ onAddressSelect, onClose }: ModelSectionProps) {
 					Type de chauffage
 				</Text>
 				<select
-					value={model.heatingType}
+					value={model.heatingSystem.type}
 					onChange={(e) => setHeatingType(e.target.value as HeatingType)}
 					style={{
 						width: "100%",

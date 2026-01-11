@@ -16,14 +16,15 @@ export const INERTIA_BY_PERIOD: Record<ConstructionPeriod, number> = {
 };
 
 // Ubat (W/m².K) based on DPE class
+// Values for E/F/G increased to reflect typical old French buildings
 export const UBAT_BY_DPE: Record<DPEClass, number> = {
 	A: 0.5,
 	B: 0.7,
 	C: 0.9,
 	D: 1.2,
-	E: 1.6,
-	F: 2.5,
-	G: 3,
+	E: 2.0,
+	F: 3.5,
+	G: 5.0,
 };
 
 // CO2 emissions (kg CO2/kWh final energy)
@@ -44,12 +45,6 @@ export const ENERGY_PRICES: Record<HeatingType, number> = {
 	heat_pump_constant: 0.2516,
 };
 
-// COP nominal for heat pumps
-export const COP_NOMINAL = 3.5;
-
-// Reference outdoor temperature for COP calculation
-export const COP_REFERENCE_TEMP = 7;
-
 // ============================================================================
 // UI Constants
 // ============================================================================
@@ -62,6 +57,7 @@ export const SCENARIO_COLORS: Record<string, string> = {
 	constant: "#3182CE", // Blue
 	day_reduction: "#DD6B20", // Orange
 	day_off: "#E53E3E", // Red
+	thermostat: "#805AD5", // Purple
 	outdoor: "#718096", // Gray
 };
 
@@ -105,6 +101,7 @@ export const SCENARIO_LABELS: Record<string, string> = {
 	constant: "Consigne constante",
 	day_reduction: "Baisse 3°C journée",
 	day_off: "Chauffage éteint journée",
+	thermostat: "Thermostat",
 };
 
 // ============================================================================
@@ -151,9 +148,16 @@ export const DEFAULT_MODEL: BuildingModel = {
 	latitude: DEFAULT_LOCATION.latitude,
 	longitude: DEFAULT_LOCATION.longitude,
 	surface: 80,
-	heatingType: "electric",
 	constructionYear: "1989_2000",
 	dpeClass: "D",
+	climateZone: "H1c", // Paris region
+	heatingSystem: {
+		type: "heat_pump",
+		sizingMethod: "auto",
+		designIndoorTemp: 20,
+		oversizingFactor: 1.8, // Higher for heat pumps to compensate for cold weather derating
+		heatPumpType: "standard",
+	},
 };
 
 // Default scenarios
@@ -182,5 +186,14 @@ export const DEFAULT_SCENARIOS: Scenario[] = [
 		baseTemp: 20,
 		dayStart: 8,
 		dayEnd: 18,
+	},
+	{
+		id: "thermostat",
+		name: "Thermostat",
+		enabled: false,
+		baseTemp: 20,
+		dayStart: 8,
+		dayEnd: 18,
+		preheatDuration: 1,
 	},
 ];
