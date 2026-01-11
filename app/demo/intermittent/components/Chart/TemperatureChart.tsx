@@ -265,12 +265,7 @@ function TemperatureChartInner({ results, outdoorTemps, isLoading, error }: Temp
 	}
 
 	return (
-		<Box
-			height="100%"
-			minH="calc(100vh - 32px)"
-			display="flex"
-			flexDirection="column"
-		>
+		<Box height="100%" minH="calc(100vh - 32px)" display="flex" flexDirection="column">
 			<Flex justify="space-between" align="center" mb={4} flexShrink={0} wrap="wrap" gap={2}>
 				<Flex align="center" gap={3}>
 					<Link href="https://argile.ai" target="_blank" rel="noopener noreferrer">
