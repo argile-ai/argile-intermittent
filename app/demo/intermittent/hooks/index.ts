@@ -1,0 +1,1 @@
+export { usePVGIS } from "./usePVGIS";
