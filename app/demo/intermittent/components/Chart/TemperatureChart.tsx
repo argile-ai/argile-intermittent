@@ -189,7 +189,7 @@ function TemperatureChartInner({ results, outdoorTemps, isLoading, error }: Temp
 			},
 			yAxis: {
 				type: "value",
-				name: "Température (°C)",
+				name: "°C",
 				min: (value: { min: number }) => Math.floor(value.min - 2),
 				max: (value: { max: number }) => Math.ceil(value.max + 2),
 			},
@@ -219,10 +219,6 @@ function TemperatureChartInner({ results, outdoorTemps, isLoading, error }: Temp
 				flexDirection="column"
 				alignItems="center"
 				justifyContent="center"
-				bg="white"
-				borderRadius="lg"
-				border="1px solid"
-				borderColor="red.200"
 				p={6}
 			>
 				<Text color="red.500" fontWeight="medium" mb={2}>
@@ -248,10 +244,6 @@ function TemperatureChartInner({ results, outdoorTemps, isLoading, error }: Temp
 				display="flex"
 				alignItems="center"
 				justifyContent="center"
-				bg="white"
-				borderRadius="lg"
-				border="1px solid"
-				borderColor="gray.200"
 			>
 				<Text color="gray.500">Chargement des données météo PVGIS...</Text>
 			</Box>
@@ -266,10 +258,6 @@ function TemperatureChartInner({ results, outdoorTemps, isLoading, error }: Temp
 				display="flex"
 				alignItems="center"
 				justifyContent="center"
-				bg="white"
-				borderRadius="lg"
-				border="1px solid"
-				borderColor="gray.200"
 			>
 				<Text color="gray.500">Aucune donnée météo disponible</Text>
 			</Box>
@@ -278,11 +266,6 @@ function TemperatureChartInner({ results, outdoorTemps, isLoading, error }: Temp
 
 	return (
 		<Box
-			bg="white"
-			borderRadius="lg"
-			border="1px solid"
-			borderColor="gray.200"
-			p={4}
 			height="100%"
 			minH="calc(100vh - 32px)"
 			display="flex"
