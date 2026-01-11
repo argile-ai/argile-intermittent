@@ -1,11 +1,4 @@
-import type {
-	BuildingModel,
-	ConstructionPeriod,
-	DPEClass,
-	EmitterType,
-	HeatingType,
-	Scenario,
-} from "../types";
+import type { BuildingModel, ConstructionPeriod, DPEClass, HeatingType, Scenario } from "../types";
 
 // ============================================================================
 // Thermal Model Constants
@@ -107,29 +100,6 @@ export const CONSTRUCTION_PERIOD_LABELS: Record<ConstructionPeriod, string> = {
 	after_2020: "Après 2020",
 };
 
-// French labels for emitter types
-export const EMITTER_TYPE_LABELS: Record<EmitterType, string> = {
-	air_blown: "Air soufflant",
-	hydraulic_radiators: "Radiateurs hydrauliques",
-	floor_heating: "Planchers chauffants",
-};
-
-// Emitter thermal characteristics
-// Thermal capacity (Wh/K per m² of heated surface) - represents emitter + coupling mass
-export const EMITTER_THERMAL_CAPACITY: Record<EmitterType, number> = {
-	air_blown: 0.5, // Very low: just air movement, almost instant response
-	hydraulic_radiators: 3, // Medium: water mass + radiator metal
-	floor_heating: 25, // High: concrete screed mass (~5-7cm)
-};
-
-// Heat transfer coefficient from emitter to room (W/K per m²)
-// Higher = faster heat transfer from emitter to room
-export const EMITTER_TRANSFER_COEFFICIENT: Record<EmitterType, number> = {
-	air_blown: 50, // Very high: forced convection, instant transfer
-	hydraulic_radiators: 8, // Medium: natural convection + radiation
-	floor_heating: 5, // Lower: large surface but low temperature differential
-};
-
 // Scenario labels
 export const SCENARIO_LABELS: Record<string, string> = {
 	constant: "Consigne constante",
@@ -164,16 +134,6 @@ export const CONSTRUCTION_PERIODS: ConstructionPeriod[] = [
 // All DPE classes
 export const DPE_CLASSES: DPEClass[] = ["A", "B", "C", "D", "E", "F", "G"];
 
-// Emitter types for heat pumps
-export const HEAT_PUMP_EMITTERS: EmitterType[] = [
-	"air_blown",
-	"hydraulic_radiators",
-	"floor_heating",
-];
-
-// Emitter types for other heating systems
-export const OTHER_EMITTERS: EmitterType[] = ["hydraulic_radiators", "floor_heating"];
-
 // ============================================================================
 // Default Values
 // ============================================================================
@@ -194,7 +154,6 @@ export const DEFAULT_MODEL: BuildingModel = {
 	heatingType: "electric",
 	constructionYear: "1989_2000",
 	dpeClass: "D",
-	emitterType: undefined,
 };
 
 // Default scenarios

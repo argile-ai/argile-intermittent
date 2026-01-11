@@ -11,8 +11,6 @@ export type ConstructionPeriod =
 
 export type DPEClass = "A" | "B" | "C" | "D" | "E" | "F" | "G";
 
-export type EmitterType = "air_blown" | "hydraulic_radiators" | "floor_heating";
-
 export interface BuildingModel {
 	address: string;
 	latitude: number;
@@ -21,7 +19,6 @@ export interface BuildingModel {
 	heatingType: HeatingType;
 	constructionYear: ConstructionPeriod;
 	dpeClass: DPEClass;
-	emitterType?: EmitterType;
 }
 
 export type ScenarioType = "constant" | "day_reduction" | "day_off";

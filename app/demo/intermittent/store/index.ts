@@ -1,18 +1,7 @@
 import { create } from "zustand";
 import { useShallow } from "zustand/shallow";
-import {
-	DEFAULT_MODEL,
-	DEFAULT_SCENARIOS,
-	HEAT_PUMP_EMITTERS,
-	OTHER_EMITTERS,
-} from "../lib/constants";
-import type {
-	ConstructionPeriod,
-	DPEClass,
-	EmitterType,
-	HeatingType,
-	ScenarioType,
-} from "../types";
+import { DEFAULT_MODEL, DEFAULT_SCENARIOS } from "../lib/constants";
+import type { ConstructionPeriod, DPEClass, HeatingType, ScenarioType } from "../types";
 
 // ============================================================================
 // Store Slices
@@ -25,7 +14,6 @@ interface BuildingModelSlice {
 	setHeatingType: (heatingType: HeatingType) => void;
 	setConstructionYear: (year: ConstructionPeriod) => void;
 	setDPEClass: (dpe: DPEClass) => void;
-	setEmitterType: (emitter: EmitterType) => void;
 }
 
 interface ScenariosSlice {
@@ -61,18 +49,9 @@ const useAppStore = create<AppStore>((set) => ({
 		})),
 
 	setHeatingType: (heatingType) =>
-		set((state) => {
-			const model = { ...state.model, heatingType };
-			// Clear emitterType if switching to electric
-			if (heatingType === "electric") {
-				model.emitterType = undefined;
-			}
-			// Set default emitterType when selecting heat pump or fossil
-			if (heatingType !== "electric" && !state.model.emitterType) {
-				model.emitterType = "hydraulic_radiators";
-			}
-			return { model };
-		}),
+		set((state) => ({
+			model: { ...state.model, heatingType },
+		})),
 
 	setConstructionYear: (constructionYear) =>
 		set((state) => ({
@@ -82,11 +61,6 @@ const useAppStore = create<AppStore>((set) => ({
 	setDPEClass: (dpeClass) =>
 		set((state) => ({
 			model: { ...state.model, dpeClass },
-		})),
-
-	setEmitterType: (emitterType) =>
-		set((state) => ({
-			model: { ...state.model, emitterType },
 		})),
 
 	// Scenarios
@@ -118,21 +92,7 @@ export const useSetSurface = () => useAppStore((state) => state.setSurface);
 export const useSetHeatingType = () => useAppStore((state) => state.setHeatingType);
 export const useSetConstructionYear = () => useAppStore((state) => state.setConstructionYear);
 export const useSetDPEClass = () => useAppStore((state) => state.setDPEClass);
-export const useSetEmitterType = () => useAppStore((state) => state.setEmitterType);
 export const useSetAddress = () => useAppStore((state) => state.setAddress);
-
-// Derived selectors
-export const useShowEmitterType = () =>
-	useAppStore((state) => state.model.heatingType !== "electric");
-
-export const useAvailableEmitterTypes = () =>
-	useAppStore((state) => {
-		const ht = state.model.heatingType;
-		if (ht === "heat_pump" || ht === "heat_pump_constant") {
-			return HEAT_PUMP_EMITTERS;
-		}
-		return OTHER_EMITTERS;
-	});
 
 // Scenarios selectors
 export const useScenarios = () => useAppStore((state) => state.scenarios);

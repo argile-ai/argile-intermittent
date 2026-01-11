@@ -3,8 +3,6 @@ import {
 	CO2_FACTORS,
 	COP_NOMINAL,
 	COP_REFERENCE_TEMP,
-	EMITTER_THERMAL_CAPACITY,
-	EMITTER_TRANSFER_COEFFICIENT,
 	ENERGY_PRICES,
 	INERTIA_BY_PERIOD,
 	UBAT_BY_DPE,
@@ -81,9 +79,6 @@ function calculateMaxHeatingPower(model: BuildingModel, designOutdoorTemp: numbe
 
 /**
  * Run thermal simulation for a scenario
- * Uses a two-node RC model when emitter type is specified:
- * - Node 1: Emitter (receives heating power, transfers heat to room)
- * - Node 2: Room (receives heat from emitter, loses heat to outside)
  */
 export function runSimulation(
 	model: BuildingModel,
@@ -92,20 +87,8 @@ export function runSimulation(
 ): SimulationResult {
 	const hoursPerYear = 8760;
 	const ubat = UBAT_BY_DPE[model.dpeClass];
-	const ua = ubat * model.surface; // W/K - building envelope heat loss
-	const roomCapacity = calculateThermalCapacity(model); // Wh/K - room thermal mass
-
-	// Emitter characteristics (two-node model)
-	// Only use two-node model for emitters with significant thermal mass
-	// Air blown heaters have no thermal mass - use single-node model
-	const emitterType = model.emitterType;
-	const useTwoNodeModel = emitterType === "hydraulic_radiators" || emitterType === "floor_heating";
-	const emitterCapacity = useTwoNodeModel
-		? EMITTER_THERMAL_CAPACITY[emitterType] * model.surface // Wh/K
-		: 0;
-	const emitterTransfer = useTwoNodeModel
-		? EMITTER_TRANSFER_COEFFICIENT[emitterType] * model.surface // W/K
-		: 0;
+	const ua = ubat * model.surface; // W/K
+	const capacity = calculateThermalCapacity(model); // Wh/K
 
 	// Find design outdoor temperature (e.g., 5th percentile)
 	const sortedTemps = [...outdoorTemps].sort((a, b) => a - b);
@@ -117,9 +100,8 @@ export function runSimulation(
 	const ambientTemps: number[] = [];
 	const heatingPower: number[] = [];
 
-	// Initial temperatures
-	let roomTemp = scenario.baseTemp;
-	let emitterTemp = scenario.baseTemp; // Emitter starts at room temperature
+	// Initial indoor temperature
+	let indoorTemp = scenario.baseTemp;
 
 	// Time step (1 hour)
 	const dt = 1;
@@ -131,64 +113,42 @@ export function runSimulation(
 
 		setpointTemps.push(setpoint ?? 0);
 
-		// Calculate heat flows
-		const envelopeLoss = ua * (roomTemp - outdoorTemp); // Heat loss through envelope
+		// Calculate heat loss (W)
+		const heatLoss = ua * (indoorTemp - outdoorTemp);
 
-		let heatingToEmitter = 0; // Power delivered to emitter/room (W)
+		let thermalPower = 0; // Thermal power delivered to building (W)
 		let electricalPower = 0; // Electrical power consumed (W)
 
 		if (setpoint !== null) {
-			// Control based on room temperature error
-			const tempError = setpoint - roomTemp;
+			// Proportional control: calculate power needed to reach/maintain setpoint
+			const tempError = setpoint - indoorTemp;
 
-			// PID-like control with different gains based on emitter type
-			// Floor heating needs more aggressive control due to slow response
-			const controlGain = emitterType === "floor_heating" ? 4.0 : 2.0;
-
-			// Required power to compensate losses and correct temperature
-			const requiredPower = envelopeLoss + (tempError * roomCapacity * controlGain) / dt;
+			// PID-like control: compensate heat loss + correct temperature error
+			const controlGain = 2.0;
+			const requiredPower = heatLoss + (tempError * capacity * controlGain) / dt;
 
 			// Only heat, don't cool (positive power only), and limit to max
-			heatingToEmitter = Math.max(0, Math.min(requiredPower, maxPower * 1000));
+			thermalPower = Math.max(0, Math.min(requiredPower, maxPower * 1000));
 
 			// Calculate electrical power for heat pumps
 			if (model.heatingType === "heat_pump" || model.heatingType === "heat_pump_constant") {
 				const cop = calculateCOP(outdoorTemp, model.heatingType === "heat_pump_constant");
-				electricalPower = heatingToEmitter / cop;
+				electricalPower = thermalPower / cop;
 			} else {
-				electricalPower = heatingToEmitter; // Direct heating (electric, gas, oil)
+				electricalPower = thermalPower; // Direct heating (electric, gas, oil)
 			}
 		}
 
-		// Update temperatures using RC model
-		if (useTwoNodeModel && emitterCapacity > 0) {
-			// Two-node model: Heating → Emitter → Room → Outside
-			// Heat transfer from emitter to room
-			const emitterToRoom = emitterTransfer * (emitterTemp - roomTemp);
+		// Update indoor temperature using RC model
+		// dT/dt = (1/C) * [P_heating - UA * (T_indoor - T_outdoor)]
+		const netHeat = thermalPower - heatLoss;
+		const dT = (netHeat * dt) / capacity;
+		indoorTemp = indoorTemp + dT;
 
-			// Update emitter temperature
-			// dT_emitter/dt = (1/C_emitter) * [P_heating - h * (T_emitter - T_room)]
-			const dT_emitter = ((heatingToEmitter - emitterToRoom) * dt) / emitterCapacity;
-			emitterTemp = emitterTemp + dT_emitter;
+		// Clamp temperature to reasonable bounds
+		indoorTemp = Math.max(outdoorTemp, Math.min(35, indoorTemp));
 
-			// Update room temperature
-			// dT_room/dt = (1/C_room) * [h * (T_emitter - T_room) - UA * (T_room - T_outdoor)]
-			const dT_room = ((emitterToRoom - envelopeLoss) * dt) / roomCapacity;
-			roomTemp = roomTemp + dT_room;
-
-			// Clamp emitter temperature (safety limits)
-			emitterTemp = Math.max(roomTemp - 5, Math.min(55, emitterTemp));
-		} else {
-			// Single-node model (direct heating): Heating → Room → Outside
-			const netHeat = heatingToEmitter - envelopeLoss;
-			const dT = (netHeat * dt) / roomCapacity;
-			roomTemp = roomTemp + dT;
-		}
-
-		// Clamp room temperature to reasonable bounds
-		roomTemp = Math.max(outdoorTemp, Math.min(35, roomTemp));
-
-		ambientTemps.push(roomTemp);
+		ambientTemps.push(indoorTemp);
 		heatingPower.push(electricalPower / 1000); // Convert to kW
 	}
 

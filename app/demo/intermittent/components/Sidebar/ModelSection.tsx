@@ -5,21 +5,17 @@ import {
 	CONSTRUCTION_PERIOD_LABELS,
 	DPE_CLASSES,
 	DPE_COLORS,
-	EMITTER_TYPE_LABELS,
 	HEATING_TYPES,
 	HEATING_TYPE_LABELS,
 } from "../../lib/constants";
 import {
-	useAvailableEmitterTypes,
 	useModel,
 	useSetConstructionYear,
 	useSetDPEClass,
-	useSetEmitterType,
 	useSetHeatingType,
 	useSetSurface,
-	useShowEmitterType,
 } from "../../store";
-import type { ConstructionPeriod, EmitterType, HeatingType } from "../../types";
+import type { ConstructionPeriod, HeatingType } from "../../types";
 import { AddressAutocomplete } from "./AddressAutocomplete";
 
 interface ModelSectionProps {
@@ -30,15 +26,12 @@ interface ModelSectionProps {
 export function ModelSection({ onAddressSelect, onClose }: ModelSectionProps) {
 	// Get state from store
 	const model = useModel();
-	const showEmitterType = useShowEmitterType();
-	const availableEmitterTypes = useAvailableEmitterTypes();
 
 	// Get actions from store
 	const setSurface = useSetSurface();
 	const setHeatingType = useSetHeatingType();
 	const setConstructionYear = useSetConstructionYear();
 	const setDPEClass = useSetDPEClass();
-	const setEmitterType = useSetEmitterType();
 
 	return (
 		<Box>
@@ -162,32 +155,6 @@ export function ModelSection({ onAddressSelect, onClose }: ModelSectionProps) {
 					))}
 				</Flex>
 			</Box>
-
-			{/* Emitter Type */}
-			{showEmitterType && (
-				<Box mb={4}>
-					<Text fontSize="sm" fontWeight="medium" mb={1} color="gray.600">
-						Type d'émetteurs
-					</Text>
-					<select
-						value={model.emitterType ?? ""}
-						onChange={(e) => setEmitterType(e.target.value as EmitterType)}
-						style={{
-							width: "100%",
-							padding: "6px 8px",
-							borderRadius: "6px",
-							border: "1px solid #E2E8F0",
-							fontSize: "14px",
-						}}
-					>
-						{availableEmitterTypes.map((emitter) => (
-							<option key={emitter} value={emitter}>
-								{EMITTER_TYPE_LABELS[emitter]}
-							</option>
-						))}
-					</select>
-				</Box>
-			)}
 		</Box>
 	);
 }
