@@ -124,6 +124,9 @@ export function runSimulation(
 	// Track previous mode to reset PID state on mode change
 	let previousMode: HeatingMode = HeatingMode.Comfort;
 
+	// Track previous error for comfort mode derivative
+	let previousComfortError = 0;
+
 	// Track capacity-limited steps
 	let capacityLimitedSteps = 0;
 
@@ -171,14 +174,23 @@ export function runSimulation(
 				}
 
 				default: {
-					// Proportional control for steady-state comfort
-					// Heat loss compensation + gentle proportional correction
+					// PD control for steady-state comfort
+					// Heat loss compensation + proportional + derivative correction
 					const setpoint = schedule.setpoint ?? scenario.baseTemp;
 					const tempError = setpoint - indoorTemp;
-					// Use UA-based gain: ~5× steady-state response per °C error
-					// This avoids oscillations while still being responsive
-					const proportionalGain = ua * 5;
-					const requiredPower = heatLoss + tempError * proportionalGain;
+
+					// Proportional term for fast convergence
+					const kp = capacity * 4;
+					const P = kp * tempError;
+
+					// Light derivative term - too strong causes oscillation near setpoint
+					const kd = capacity * 0.3;
+					const errorDerivative = (tempError - previousComfortError) / dt;
+					const D = kd * errorDerivative;
+
+					previousComfortError = tempError;
+
+					const requiredPower = heatLoss + P + D;
 					thermalPower = Math.max(0, Math.min(requiredPower, maxPowerW));
 					break;
 				}

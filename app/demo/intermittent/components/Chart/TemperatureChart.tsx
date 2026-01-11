@@ -48,6 +48,7 @@ function TemperatureChartInner({ results, outdoorTemps, isLoading, error }: Temp
 	const [viewMode, setViewMode] = useState<ViewMode>("day");
 	const [selectedMonth, setSelectedMonth] = useState<number>(0); // 0-11
 	const [selectedDay, setSelectedDay] = useState<number>(0); // 0-based day within month
+	const [showPowerAxis, setShowPowerAxis] = useState(false); // Power curves hidden by default
 
 	// Get number of days in selected month
 	const daysInMonth = DAYS_PER_MONTH[selectedMonth] ?? 31;
@@ -253,7 +254,10 @@ function TemperatureChartInner({ results, outdoorTemps, isLoading, error }: Temp
 					name: "kW",
 					position: "right",
 					min: 0,
-					axisLine: { show: true },
+					axisLine: { show: showPowerAxis },
+					axisLabel: { show: showPowerAxis },
+					axisTick: { show: showPowerAxis },
+					nameTextStyle: { color: showPowerAxis ? undefined : "transparent" },
 					splitLine: { show: false },
 				},
 			],
@@ -272,7 +276,20 @@ function TemperatureChartInner({ results, outdoorTemps, isLoading, error }: Temp
 			],
 			series,
 		};
-	}, [results, outdoorTemps, dataRange, viewMode, selectedMonth]);
+	}, [results, outdoorTemps, dataRange, viewMode, selectedMonth, showPowerAxis]);
+
+	// Handle legend selection changes to show/hide power axis
+	const onEvents = useMemo(
+		() => ({
+			legendselectchanged: (params: { selected: Record<string, boolean> }) => {
+				const anyPowerVisible = Object.entries(params.selected).some(
+					([name, visible]) => name.includes("Puissance") && visible,
+				);
+				setShowPowerAxis(anyPowerVisible);
+			},
+		}),
+		[],
+	);
 
 	if (error) {
 		return (
@@ -410,6 +427,7 @@ function TemperatureChartInner({ results, outdoorTemps, isLoading, error }: Temp
 					style={{ height: "100%", width: "100%" }}
 					notMerge={true}
 					opts={{ renderer: "svg" }}
+					onEvents={onEvents}
 				/>
 			</Box>
 		</Box>
