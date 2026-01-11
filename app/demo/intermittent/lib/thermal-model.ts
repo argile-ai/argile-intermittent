@@ -99,8 +99,7 @@ export function runSimulation(
 	// Only use two-node model for emitters with significant thermal mass
 	// Air blown heaters have no thermal mass - use single-node model
 	const emitterType = model.emitterType;
-	const useTwoNodeModel =
-		emitterType === "hydraulic_radiators" || emitterType === "floor_heating";
+	const useTwoNodeModel = emitterType === "hydraulic_radiators" || emitterType === "floor_heating";
 	const emitterCapacity = useTwoNodeModel
 		? EMITTER_THERMAL_CAPACITY[emitterType] * model.surface // Wh/K
 		: 0;
